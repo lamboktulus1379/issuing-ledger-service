@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube API OAuth2 Setup</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #b8daff;
+            color: #0c5460;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .auth-button {
+            background: #28a745;
+            font-size: 18px;
+            padding: 15px 30px;
+        }
+        .auth-button:hover {
+            background: #218838;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .hidden {
+            display: none;
+        }
+        .step {
+            margin: 20px 0;
+            padding: 15px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎥 YouTube API OAuth2 Setup</h1>
+
+    <div class="container info">
+        <h3>📋 Current Status</h3>
+        <p><strong>Client ID:</strong> 103369553681-rmc58cf2jmma51ksjmfvjd0j89me9cs3.apps.googleusercontent.com</p>
+        <p><strong>Channel ID:</strong> UCyEDc1nxieTvwjllNkdp4IQ</p>
+        <p><strong>Server:</strong> <span id="server-status">Checking...</span></p>
+    </div>
+
+    <div class="step">
+        <h3>Step 1: Authorize Application</h3>
+        <p>Click the button below to authorize your application to access your YouTube data:</p>
+        <button id="auth-btn" class="auth-button" onclick="startAuth()">🔐 Authorize YouTube Access</button>
+    </div>
+
+    <div class="step hidden" id="step2">
+        <h3>Step 2: Authorization Complete</h3>
+        <div class="container success">
+            <p>✅ Authorization successful! Your tokens have been received.</p>
+        </div>
+        <div id="tokens-container">
+            <!-- Tokens will be displayed here -->
+        </div>
+    </div>
+
+    <div class="step">
+        <h3>Step 3: Update Configuration</h3>
+        <p>After getting your tokens, update your environment configuration:</p>
+        <pre id="env-update">
+# Add these to your config.env or .env.youtube file:
+YOUTUBE_ACCESS_TOKEN=your_access_token_here
+YOUTUBE_REFRESH_TOKEN=your_refresh_token_here
+        </pre>
+        <button onclick="copyToClipboard('env-update')">📋 Copy Configuration</button>
+    </div>
+
+    <div class="container warning">
+        <h3>⚠️ Important Notes</h3>
+        <ul>
+            <li>Keep your tokens secure and never share them publicly</li>
+            <li>Access tokens expire, but refresh tokens can be used to get new access tokens</li>
+            <li>After updating your configuration, restart your Go backend server</li>
+        </ul>
+    </div>
+
+    <script>
+        // Check server status
+        async function checkServerStatus() {
+            try {
+                const response = await fetch('/auth/youtube');
+                document.getElementById('server-status').textContent = '✅ Running on localhost:10001';
+                document.getElementById('server-status').style.color = 'green';
+            } catch (error) {
+                document.getElementById('server-status').textContent = '❌ Server not accessible';
+                document.getElementById('server-status').style.color = 'red';
+            }
+        }
+
+        // Start OAuth2 flow
+        async function startAuth() {
+            try {
+                const response = await fetch('/auth/youtube');
+                const data = await response.json();
+                
+                if (data.auth_url) {
+                    // Open authorization URL
+                    window.open(data.auth_url, '_blank');
+                    
+                    // Update UI
+                    document.getElementById('auth-btn').textContent = '⏳ Waiting for authorization...';
+                    document.getElementById('auth-btn').disabled = true;
+                    
+                    // Start polling for completion
+                    pollForTokens();
+                } else {
+                    alert('Failed to get authorization URL');
+                }
+            } catch (error) {
+                alert('Error starting authorization: ' + error.message);
+            }
+        }
+
+        // Poll for tokens (in a real app, you'd use WebSocket or Server-Sent Events)
+        function pollForTokens() {
+            // For this demo, we'll just show instructions
+            setTimeout(() => {
+                document.getElementById('auth-btn').textContent = '✅ Check callback page for tokens';
+                document.getElementById('auth-btn').disabled = false;
+            }, 3000);
+        }
+
+        // Copy text to clipboard
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            });
+        }
+
+        // Check URL parameters for tokens (if redirected back here)
+        function checkForTokens() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const accessToken = urlParams.get('access_token');
+            const refreshToken = urlParams.get('refresh_token');
+            
+            if (accessToken && refreshToken) {
+                document.getElementById('step2').classList.remove('hidden');
+                document.getElementById('tokens-container').innerHTML = `
+                    <div class="container success">
+                        <h4>🔑 Your Tokens:</h4>
+                        <p><strong>Access Token:</strong><br><code>${accessToken}</code></p>
+                        <p><strong>Refresh Token:</strong><br><code>${refreshToken}</code></p>
+                        <button onclick="copyTokens('${accessToken}', '${refreshToken}')">📋 Copy Both Tokens</button>
+                    </div>
+                `;
+                
+                // Update the configuration example
+                document.getElementById('env-update').textContent = `
+# Add these to your config.env or .env.youtube file:
+YOUTUBE_ACCESS_TOKEN=${accessToken}
+YOUTUBE_REFRESH_TOKEN=${refreshToken}
+                `;
+            }
+        }
+
+        function copyTokens(accessToken, refreshToken) {
+            const text = `YOUTUBE_ACCESS_TOKEN=${accessToken}\nYOUTUBE_REFRESH_TOKEN=${refreshToken}`;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Tokens copied to clipboard!');
+            });
+        }
+
+        // Initialize page
+        checkServerStatus();
+        checkForTokens();
+    </script>
+</body>
+</html>

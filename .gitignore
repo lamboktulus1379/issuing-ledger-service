@@ -1,0 +1,143 @@
+# Ignore local nginx backup snapshots and archives
+deploy/azure/nginx-backups/
+
+# Ignore local env overrides for rollback/deploy scripts
+deploy/azure/.env
+# General
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Go
+bin/
+dist/
+build/
+coverage.html
+cover.txt
+command.log
+
+# Docker/compose generated
+**/.env
+config.env
+config.env.example
+config_windows.env
+config.toml
+config.json
+config-stage.json
+credentials.json
+client_secret_*.json
+
+# Node (if any)
+node_modules/
+# local TLS certs and launchd artifacts
+certs/
+*.pem
+*.crt
+*.key
+local-dev/launchd/*.plist
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Environment variables (sensitive data)
+.env
+.env.*
+.env.local
+.env.production
+.env.development
+.env.youtube
+config.env
+config-*.env
+*.env
+
+# Configuration files with sensitive data
+config.json
+config.toml
+config-*.json
+config-*.toml
+
+# Credentials and secrets
+credentials.json
+client_secret_*.json
+service-account-*.json
+*.key
+*.pem
+*.p12
+
+# Log
+logs/
+*.csv
+
+# Temporary deployment files
+/tmp/go-app*.log
+/tmp/go-app*.pid
+*.pid
+
+tmp/*
+
+issues
+
+/lint/
+
+# IDE files and directories
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Test scripts and other shell scripts
+test_*.sh
+start-*.sh
+stop-*.sh
+setup-*.sh
+run_*.sh
+build.sh
+
+# Keep deployment scripts
+!deploy-nginx.sh
+!service.sh
+!quick-deploy.sh
+
+# Compiled binaries
+youtube-api
+youtube-api-app
+main
+app
+
+# Local documentation: previously fully ignored. Allow curated architecture docs & diagrams.
+docs/
+!docs/ARCHITECTURE.md
+!docs/diagrams/
+!docs/diagrams/*.mmd
+!docs/diagrams/*.png
+!docs/diagrams/*.svg
+token.json
+
+# Local TLS certs
+certs/
+
+# macOS Finder metadata
+.DS_Store
+
+# Liquibase generated SQL (offline/dry-run)
+liquibase/**/generated-*.sql
+*.log

@@ -1,0 +1,90 @@
+{
+    "app": {
+        "port": "10001",
+        "secretKey": "your-secret-key-here"
+    },
+    "googleSheet": {
+        "type": "1",
+        "spreadsheetId": "your-spreadsheet-id",
+        "spreadsheetName": "your-spreadsheet-name",
+        "spreadsheetDescription": "your-description",
+        "spreadsheetColumnReadRange": "your-range"
+    },
+    "database": {
+        "psql": {
+            "name": "your_database_name",
+            "host": "localhost",
+            "port": "5432",
+            "user": "your_username",
+            "password": "your_password"
+        },
+        "mysql": {
+            "name": "your_database_name",
+            "host": "localhost",
+            "port": "3306",
+            "user": "your_username",
+            "password": "your_password"
+        },
+        "mongo": {
+            "name": "your_database_name",
+            "host": "localhost",
+            "user": "your_username",
+            "password": "your_password",
+            "port": "27017",
+            "url": "mongodb://your-connection-string"
+        }
+    },
+    "tulusTech": {
+        "header": {
+            "contentType": "application/json"
+        },
+        "host": "https://your-api-host.com",
+        "token": "your-api-token"
+    },
+    "data": {
+        "source": "googlesheet"
+    },
+    "pubsub": {
+        "projectID": "your-gcp-project-id"
+    },
+    "serviceBus": {
+        "namespace": "your-service-bus-connection-string"
+    },
+    "redisClient": {
+        "username": "default",
+        "password": "your-redis-password",
+        "host": "your-redis-host",
+        "port": "6379",
+        "databaseName": "your-cache-db"
+    },
+    "youtube": {
+        "apiKey": "YOUR_YOUTUBE_API_KEY",
+        "clientId": "YOUR_YOUTUBE_CLIENT_ID",
+        "clientSecret": "YOUR_YOUTUBE_CLIENT_SECRET",
+        "redirectURI": "http://localhost:10001/auth/youtube/callback",
+    "channelId": "YOUR_YOUTUBE_CHANNEL_ID",
+        "scopes": [
+            "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.force-ssl"
+        ]
+    },
+    "share": {
+        "platforms": ["twitter", "facebook", "whatsapp"]
+    },
+    "oauth": {
+        "facebook": {
+            "clientId": "YOUR_FACEBOOK_APP_ID",
+            "clientSecret": "YOUR_FACEBOOK_APP_SECRET",
+            "redirectURI": "http://localhost:10001/auth/facebook/callback"
+        },
+        "twitter": {
+            "clientId": "YOUR_TWITTER_CLIENT_ID",
+            "clientSecret": "YOUR_TWITTER_CLIENT_SECRET",
+            "redirectURI": "http://localhost:10001/auth/twitter/callback"
+        }
+    },
+    "logger": {
+        "format": "2006-01-02"
+    }
+}

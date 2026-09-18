@@ -1,0 +1,53 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-users
+      author: github-copilot
+      preConditions:
+        - onFail: MARK_RAN
+          not:
+            tableExists:
+              schemaName: dbo
+              tableName: users
+      changes:
+        - createTable:
+            schemaName: dbo
+            tableName: users
+            columns:
+              - column:
+                  name: id
+                  type: INT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: PK_users
+              - column:
+                  name: name
+                  type: NVARCHAR(255)
+              - column:
+                  name: user_name
+                  type: NVARCHAR(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: password
+                  type: NVARCHAR(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: DATETIME2
+                  defaultValueComputed: SYSUTCDATETIME()
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: DATETIME2
+        - addUniqueConstraint:
+            schemaName: dbo
+            tableName: users
+            columnNames: user_name
+            constraintName: UQ_users_user_name
+      rollback:
+        - dropTable:
+            schemaName: dbo
+            tableName: users

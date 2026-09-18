@@ -1,0 +1,23 @@
+# /etc/systemd/system/go-project.service
+[Unit]
+Description=go-project HTTP service (proxied by Nginx)
+After=network.target
+
+[Service]
+Type=simple
+# Adjust the user/group to your deploy user
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/go-project
+ExecStart=/opt/go-project/server
+# Run app on HTTP 10010; TLS is terminated at Nginx
+Environment=APP_PORT=10010
+Environment=TLS_ENABLED=0
+# OAuth callback URLs pointing to your public domain
+Environment=YOUTUBE_REDIRECT_URL=https://gra.tulus.tech/auth/youtube/callback
+Environment=FACEBOOK_REDIRECT_URL=https://gra.tulus.tech/auth/facebook/callback
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
