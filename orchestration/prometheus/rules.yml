@@ -1,0 +1,20 @@
+groups:
+  - name: kafka-monitoring
+    rules:
+      - alert: KafkaExporterDown
+        expr: up{job="kafka"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Kafka exporter is unavailable
+          description: Prometheus cannot scrape the Kafka exporter.
+
+      - alert: KafkaConsumerLagHigh
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Kafka consumer lag is high
+          description: Consumer group {{ $labels.consumergroup }} has lag above 1000 on topic {{ $labels.topic }}.

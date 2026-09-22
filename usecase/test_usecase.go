@@ -54,45 +54,49 @@ func (testUsecase *TestUsecase) Test(ctx context.Context) dto.TestDto {
 	byteMsg, err := json.Marshal(msg)
 	if err != nil {
 		logger.GetLogger().Error("Error while marshalling")
-		return res
+		// return res
 	}
 	publishResponse, err := testUsecase.TestPubSub.Publish(ctx, "topic", byteMsg)
 	if err != nil {
 		logger.GetLogger().Error("Error while publishing message")
 		res.PubSub = err.Error()
-		return res
+		// return res
+	} else {
+		logger.GetLogger().WithField("publishResponse", publishResponse).Info("Successfully published")
+		res.PubSub = "OK"
 	}
-	logger.GetLogger().WithField("publishResponse", publishResponse).Info("Successfully published")
-	res.PubSub = "OK"
 
 	err = testUsecase.TestServiceBus.SendMessage(byteMsg)
 	if err != nil {
 		logger.GetLogger().Error("Error while publishing message with service bus")
 		res.ServiceBus = err.Error()
-		return res
+		// return res
+	} else {
+		res.ServiceBus = "OK"
 	}
-	res.ServiceBus = "OK"
 
 	testUsecase.TestCache.Set(ctx, "test", "test")
 	val, err := testUsecase.TestCache.Get(ctx, "test")
 	if err != nil {
 		logger.GetLogger().Error("Error while getting value from cache")
 		res.Cache = "Error while getting value from cache"
-		return res
+		// return res
+	} else {
+		res.Cache = val.(string)
 	}
-	res.Cache = val.(string)
 
 	reqHeader := models.ReqHeader{}
 	randomTypingRes, err := testUsecase.TulusTechHost.GetRandomTyping(reqHeader)
 	if err != nil {
 		logger.GetLogger().Error("Error while get random typing")
 		res.TulusTech = err.Error()
-		return res
+		// return res
+	} else {
+		logger.GetLogger().
+			WithField("randomTypingResponse", randomTypingRes).
+			Info("Successfully get random typing")
+		res.TulusTech = "OK"
 	}
-	logger.GetLogger().
-		WithField("randomTypingResponse", randomTypingRes).
-		Info("Successfully get random typing")
-	res.TulusTech = "OK"
 
 	return res
 }

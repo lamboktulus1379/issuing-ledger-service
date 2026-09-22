@@ -23,6 +23,8 @@ type TestRepository struct {
 }
 
 func (t *TestRepository) Test(ctx context.Context) ([]model.Project, error) {
+	// TODO: Remove this
+	return []model.Project{}, nil
 	myProjects := []model.Project{
 		{
 			Name:        "Project 1",

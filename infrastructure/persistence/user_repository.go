@@ -28,8 +28,8 @@ func (userRepository *UserRepository) GetById(ctx context.Context, id int) (mode
 	statement, err := userRepository.sqlDB.PrepareContext(
 		ctx,
 		`SELECT u.id, u.name, u.user_name, u.password, u.created_at, u.updated_at 
-	FROM public.user AS u 
-	WHERE u.id = $1`,
+	FROM user AS u 
+	WHERE u.id = ?`,
 	)
 	if err != nil {
 		logger.GetLogger().WithField("error", err).Error(ErrorPreparingStatement)
@@ -68,8 +68,8 @@ func (userRepository *UserRepository) GetByUserName(
 	statement, err := userRepository.sqlDB.PrepareContext(
 		ctx,
 		`SELECT u.id, u.name, u.user_name, u.password, u.created_at, u.updated_at 
-	FROM public.user AS u 
-	WHERE u.user_name = $1`,
+	FROM user AS u 
+	WHERE u.user_name = ?`,
 	)
 	if err != nil {
 		logger.GetLogger().WithField("error", err).Error(ErrorPreparingStatement)
@@ -102,7 +102,7 @@ func (userRepository *UserRepository) GetByUserName(
 func (userRepository *UserRepository) CreateUser(ctx context.Context, user model.User) error {
 	statement, err := userRepository.sqlDB.PrepareContext(
 		ctx,
-		`INSERT INTO public.user (name, user_name, password) VALUES ($1, $2, $3)`,
+		`INSERT INTO user (name, user_name, password) VALUES (?, ?, ?)`,
 	)
 	if err != nil {
 		logger.GetLogger().WithField("error", err).Error(ErrorPreparingStatement)

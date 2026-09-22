@@ -44,20 +44,6 @@
 - `POST /register` - User registration
 - `POST /login` - User login
 - `POST /healthz` - Health check
-- `GET /test/youtube/videos` - Mock YouTube videos
-
-**Protected Endpoints (JWT Required):**
-- `GET /api/youtube/videos` - YouTube videos (authenticated)
-- `GET /api/youtube/videos/:videoId` - Single video details
-- `GET /api/youtube/channel` - YouTube channel info
-- `GET /api/youtube/search` - YouTube search
-- `GET /api/youtube/info` - YouTube API info
-
-#### Configuration
-- **Config File**: `config.json`
-- **Secret Key**: `"secret"` (used for JWT signing)
-- **Database**: PostgreSQL on localhost:5432
-- **Port**: 10001
 
 ## 🧪 Testing Examples
 
@@ -80,19 +66,6 @@ curl -X POST http://localhost:10001/login \
     "user_name": "testuser",
     "password": "testpass123"
   }'
-```
-
-### 3. Access Protected Endpoint
-```bash
-curl -X GET http://localhost:10001/api/youtube/videos \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
-  -H "Content-Type: application/json"
-```
-
-### 4. Access Public Endpoint
-```bash
-curl -X GET http://localhost:10001/test/youtube/videos \
-  -H "Content-Type: application/json"
 ```
 
 ## 🛠️ Scripts Created
@@ -140,23 +113,6 @@ curl -X GET http://localhost:10001/test/youtube/videos \
 - Passwords are hashed using MD5 (consider upgrading to bcrypt)
 - Hash stored in PostgreSQL database
 - Original password never stored in plaintext
-
-## 🌐 Frontend Integration
-
-### Angular Setup
-For your Angular frontend, store the JWT token and include it in API requests:
-
-```typescript
-// After login, store token
-localStorage.setItem('jwt-token', response.data.access_token);
-
-// Include in HTTP requests
-const token = localStorage.getItem('jwt-token');
-const headers = {
-  'Authorization': `Bearer ${token}`,
-  'Content-Type': 'application/json'
-};
-```
 
 ### CORS Configuration
 The server is configured to accept requests from:
