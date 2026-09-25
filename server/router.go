@@ -12,12 +12,14 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func InitiateRouter(
 	userHandler httpHandler.IUserHandler,
 	testHandler httpHandler.ITestHandler,
 	userRepository repository.IUser,
+	issuingHandler *httpHandler.IssuingHandler,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -104,6 +106,7 @@ func InitiateRouter(
 		},
 		MaxAge: 12 * time.Hour,
 	}))
+	router.Use(otelgin.Middleware("ledger-service"))
 
 	// Ensure all preflight requests get a 204 with middleware-applied CORS headers
 	router.OPTIONS("/*corsPreflight", func(c *gin.Context) {
@@ -129,6 +132,10 @@ func InitiateRouter(
 		res := ctx.Request.Body
 		ctx.JSON(http.StatusOK, res)
 	})
+
+	if issuingHandler != nil {
+		api.POST("/authorize", gin.WrapF(issuingHandler.HTTPHandler().ServeHTTP))
+	}
 
 	return router
 }

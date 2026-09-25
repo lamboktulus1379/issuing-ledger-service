@@ -1,0 +1,78 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: ledger-prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    volumes:
+      - ../../orchestration/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../orchestration/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--web.enable-otlp-receiver'
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - ledger_network
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: ledger-grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - PROMETHEUS_ENDPOINT=http://prometheus:9090
+    volumes:
+      - ../../orchestration/grafana/config/provisioning:/etc/grafana/provisioning:ro
+      - ../../orchestration/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - tempo
+    networks:
+      - ledger_network
+
+  otelcollector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    container_name: ledger-otelcollector
+    command: ["--config=/etc/otel/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+    environment:
+      - PROMETHEUS_ENDPOINT=http://prometheus:9090/api/v1/otlp
+    volumes:
+      - ../../orchestration/otelcollector/config.yaml:/etc/otel/config.yaml:ro
+    depends_on:
+      - prometheus
+    networks:
+      - ledger_network
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: ledger-tempo
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      # FIX: Add ../../ here
+      - ../../orchestration/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+    restart: unless-stopped
+    networks:
+      - ledger_network
+
+networks:
+  ledger_network:
+    name: ledger_network
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  tempo_data:

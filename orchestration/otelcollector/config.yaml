@@ -13,12 +13,18 @@ exporters:
   debug:
     verbosity: basic
 
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
+
   otlphttp/prometheus:
     endpoint: ${env:PROMETHEUS_ENDPOINT}
     tls:
       insecure: true
 
 service:
+  telemetry:
+    metrics:
+      level: detailed
   pipelines:
     traces:
       receivers:
@@ -26,6 +32,7 @@ service:
       processors:
         - batch
       exporters:
+        - otlphttp/tempo
         - debug
 
     metrics:

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,13 +20,22 @@ import (
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/filecsv"
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/googlesheet"
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/logger"
+	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/message"
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/persistence"
+	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/persistence/ledger"
+	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/persistence/outbox"
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/pubsub"
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/servicebus"
 	httpHandler "github.com/lamboktulus1379/issuing-ledger-service/interfaces/http"
 	"github.com/lamboktulus1379/issuing-ledger-service/server"
 	"github.com/lamboktulus1379/issuing-ledger-service/usecase"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/resource"
 
+	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -36,7 +47,56 @@ func recoverPanic() {
 	}
 }
 
+func initTracer() (func(context.Context) error, error) {
+	ctx := context.Background()
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		fmt.Printf("OpenTelemetry internal error: %v\n", err)
+	}))
+
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:4317"
+	}
+	endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "http://"), "https://")
+
+	// Point the exporter to your local OTel Collector
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(endpoint),
+		otlptracegrpc.WithInsecure(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Identify your application in Grafana
+	res := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String("ledger-service"),
+	)
+
+	// Register the global trace provider
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(tp)
+
+	return tp.Shutdown, nil
+}
+
 func main() {
+	// Initialize OpenTelemetry
+	shutdown, err := initTracer()
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := shutdown(shutdownCtx); err != nil {
+			fmt.Printf("OpenTelemetry shutdown error: %v\n", err)
+		}
+	}()
 	// InitiateGoroutine()
 	defer recoverPanic()
 	ctx := context.Background()
@@ -122,6 +182,7 @@ func main() {
 
 	if err != nil {
 		logger.GetLogger().WithField("error", err).Error("Error while connection to Redis")
+		return
 	}
 
 	// testRepository := persistence.NewTestRepository(mongoDb, psqlDb)
@@ -148,15 +209,32 @@ func main() {
 	// }
 	userUsecase := usecase.NewUserUsecase(userRepository)
 	testUsecase := usecase.NewTestUsecase(tulusTechHost, testPubSub, testServiceBus, testCache)
+	if err := startOutboxStrategy(ctx, g, mysqlDB); err != nil {
+		logger.GetLogger().WithField("error", err).Error("Outbox strategy initialization failed")
+	}
+
+	ledgerRepository, err := ledger.NewMariaDBRepository(mysqlDB)
+	if err != nil {
+		logger.GetLogger().WithField("error", err).Error("Error while instantiate ledger repository")
+		return
+	}
+	issuingUsecase, err := usecase.NewIssuingUsecase(ledgerRepository)
+	if err != nil {
+		logger.GetLogger().WithField("error", err).Error("Error while instantiate issuing usecase")
+		return
+	}
 
 	userHandler := httpHandler.NewUserHandler(userUsecase)
 	testHandler := httpHandler.NewTestHandler(testUsecase)
 
-	router := server.InitiateRouter(userHandler, testHandler, userRepository)
-
+	idempotencyStore := cache.NewIdempotencyStore(redisClient)
+	issuingHandler, err := httpHandler.NewIssuingHandler(idempotencyStore, issuingUsecase)
 	if err != nil {
-		logger.GetLogger().WithField("error", err).Error("Error while StartSubscription")
+		logger.GetLogger().WithField("error", err).Error("Error while initiate issuing handler")
+		return
 	}
+
+	router := server.InitiateRouter(userHandler, testHandler, userRepository, issuingHandler)
 
 	// Comment out Test() function to prevent Google Sheets OAuth blocking
 	// Test()
@@ -222,6 +300,103 @@ func main() {
 		logger.GetLogger().WithField("error", err).Error("Server returned an error")
 		os.Exit(2)
 	}
+}
+
+// startOutboxStrategy keeps infrastructure selection at the application
+// composition root. Polling remains the default for local development and CI;
+// production can select CDC so Debezium publishes committed outbox inserts
+// from MariaDB's binlog without running a second publisher in the Go process.
+func startOutboxStrategy(ctx context.Context, g *errgroup.Group, db *sql.DB) error {
+	strategy := strings.ToLower(strings.TrimSpace(os.Getenv("OUTBOX_STRATEGY")))
+	if strategy == "" {
+		strategy = "polling"
+	}
+
+	switch strategy {
+	case "cdc":
+		logger.GetLogger().Info("Outbox strategy is CDC; Debezium handles event propagation")
+		return nil
+	case "polling":
+		if db == nil {
+			return errors.New("polling outbox strategy requires a database connection")
+		}
+	default:
+		return fmt.Errorf("unsupported OUTBOX_STRATEGY %q: expected polling or cdc", strategy)
+	}
+
+	brokers := splitCSVEnv("KAFKA_BROKERS", "localhost:9092")
+	pollInterval, err := durationEnv("OUTBOX_POLL_INTERVAL", 1*time.Second)
+	if err != nil {
+		return err
+	}
+	batchSize, err := positiveIntEnv("OUTBOX_BATCH_SIZE", 100)
+	if err != nil {
+		return err
+	}
+
+	writer := kafka.NewWriter(kafka.WriterConfig{
+		Brokers:  brokers,
+		Balancer: &kafka.LeastBytes{},
+	})
+	relay, err := message.NewOutboxRelay(db, &outbox.Repository{}, writer, pollInterval, batchSize)
+	if err != nil {
+		_ = writer.Close()
+		return fmt.Errorf("failed to create polling outbox relay: %w", err)
+	}
+
+	g.Go(func() error {
+		defer writer.Close()
+		if err := relay.Start(ctx); err != nil {
+			return fmt.Errorf("polling outbox relay stopped: %w", err)
+		}
+		return nil
+	})
+	logger.GetLogger().WithFields(map[string]interface{}{
+		"strategy":      strategy,
+		"kafka_brokers": brokers,
+		"poll_interval": pollInterval.String(),
+		"batch_size":    batchSize,
+	}).Info("Polling outbox relay started")
+	return nil
+}
+
+func splitCSVEnv(name, fallback string) []string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		value = fallback
+	}
+	parts := strings.Split(value, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if broker := strings.TrimSpace(part); broker != "" {
+			brokers = append(brokers, broker)
+		}
+	}
+	return brokers
+}
+
+func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("invalid %s %q: expected a positive duration", name, value)
+	}
+	return duration, nil
+}
+
+func positiveIntEnv(name string, fallback int) (int, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("invalid %s %q: expected a positive integer", name, value)
+	}
+	return parsed, nil
 }
 
 func InitiateDatabase() (*sql.DB, error) {

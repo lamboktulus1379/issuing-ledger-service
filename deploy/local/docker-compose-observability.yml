@@ -1,0 +1,74 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    container_name: issuing-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317" # Host Go process: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+    depends_on:
+      - tempo
+    networks:
+      - observability
+
+  tempo:
+    image: grafana/tempo:2.7.2
+    container_name: issuing-tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+      - "14317:4317" # Optional direct OTLP/gRPC access; normal traffic uses the Collector
+    networks:
+      - observability
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: issuing-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: issuing-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - tempo
+    networks:
+      - observability
+
+networks:
+  observability:
+    name: issuing-observability
+
+volumes:
+  tempo_data:
+  prometheus_data:
+  grafana_data:
+
+# Host process configuration:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+#   OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+#
+# A Go application running in another Compose service must use:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317

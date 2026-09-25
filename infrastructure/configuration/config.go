@@ -135,6 +135,7 @@ var C Config
 func init() {
 	LoadConfig()
 	initDatabase(&C)
+	initRedis(&C)
 	initApp(&C)
 	// Prefer https redirect URIs locally when TLS enabled
 	if C.App.TLSEnabled {
@@ -144,6 +145,24 @@ func init() {
 		if C.OAuth.Facebook.RedirectURI != "" && !hasHTTPS(C.OAuth.Facebook.RedirectURI) {
 			C.OAuth.Facebook.RedirectURI = toHTTPSCallback(C.OAuth.Facebook.RedirectURI)
 		}
+	}
+}
+
+func initRedis(C *Config) {
+	// Inside Docker, Redis must be addressed by its Compose service name. An
+	// environment override prevents config.json's localhost default from being
+	// used by a containerized application.
+	if v := os.Getenv("REDIS_HOST"); v != "" {
+		C.RedisClient.Host = v
+	}
+	if v := os.Getenv("REDIS_PORT"); v != "" {
+		C.RedisClient.Port = v
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		C.RedisClient.Password = v
+	}
+	if v := os.Getenv("REDIS_USERNAME"); v != "" {
+		C.RedisClient.Username = v
 	}
 }
 
@@ -195,6 +214,31 @@ func initDatabase(C *Config) {
 	}
 	if C.Database.Psql.Port == "" {
 		C.Database.Psql.Port = os.Getenv("DB_PORT")
+	}
+
+	// MySQL/MariaDB uses its own environment namespace. This is important when
+	// the application runs in Docker: MYSQL_HOST must be the Compose service
+	// name (for example, "mariadb"), never localhost.
+	if C.Database.MySql.Name == "" {
+		if v := os.Getenv("MYSQL_DATABASE"); v != "" {
+			C.Database.MySql.Name = v
+		} else if v := os.Getenv("MYSQL_DB_NAME"); v != "" {
+			C.Database.MySql.Name = v
+		}
+	}
+	if v := os.Getenv("MYSQL_HOST"); v != "" {
+		C.Database.MySql.Host = v
+	}
+	if v := os.Getenv("MYSQL_PORT"); v != "" {
+		C.Database.MySql.Port = v
+	}
+	if v := os.Getenv("MYSQL_USER"); v != "" {
+		C.Database.MySql.User = v
+	}
+	if v := os.Getenv("MYSQL_PASSWORD"); v != "" {
+		C.Database.MySql.Password = v
+	} else if v := os.Getenv("MYSQL_ROOT_PASSWORD"); v != "" && C.Database.MySql.User == "root" {
+		C.Database.MySql.Password = v
 	}
 
 	// Optional MSSQL config via environment variables (for Azure SQL in production)

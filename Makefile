@@ -7,6 +7,19 @@ LB ?= liquibase
 PG_DIR := liquibase/my_project_postgres/sql
 MYSQL_DIR := liquibase/my-project/sql
 COUNT ?= 1
+MARIADB_CONTAINER ?= ledger_db
+KAFKA_CONTAINER ?= kafka
+CDC_DATABASE ?= ledger
+CDC_DATABASE_USER ?= root
+CDC_DATABASE_PASSWORD ?= rootpassword
+CDC_TOPIC ?= ledger.events.TransactionAuthorized
+CDC_COMPOSE_FILE ?= infrastructure/docker/docker-compose-cdc.yml
+CDC_CONNECT_URL ?= http://localhost:8083
+CDC_CONNECTOR_FILE ?= infrastructure/cdc/outbox-connector.json
+APP_PORT ?= 10001
+APP_PID_FILE ?= .tmp/issuing-ledger.pid
+APP_LOG_FILE ?= .tmp/issuing-ledger.log
+AUTHORIZE_URL ?= http://localhost:$(APP_PORT)/authorize
 
 .PHONY: help
 help:
@@ -36,6 +49,16 @@ help:
 	echo "  run-http-10001      Run server over HTTP on port 10001" ; \
 	echo "  tidy                 Go mod tidy" ; \
 	echo "  test                 Run Go tests" ; \
+	echo "  register-cdc         Wait for Kafka Connect and register the Debezium connector" ; \
+	echo "  test-cdc-trigger     Insert a verification event into MariaDB outbox_events" ; \
+	echo "  test-cdc-listen      Consume routed CDC payloads from Kafka" ; \
+	echo "  infra-up             Start the Kafka Connect CDC Compose service" ; \
+	echo "  infra-down           Stop CDC services and remove volumes" ; \
+	echo "  cdc-register         Wait for Kafka Connect and register the connector" ; \
+	echo "  app-start            Start the Go API in the background" ; \
+	echo "  test-endpoint        Send a sample authorization request" ; \
+	echo "  test-kafka-listen    Consume exactly one routed Kafka event" ; \
+	echo "  e2e-local            Run the complete local CDC smoke test" ; \
 	echo "Environment overrides: LB=<path to liquibase> COUNT=<n>" ;
 	@echo "  deploy               Build and deploy to remote via deploy/deploy.sh" ; \
 	echo "    Variables: SSH_HOST, SSH_USER, SSH_PORT, DOMAIN, CERTBOT=0|1, CERTBOT_EMAIL" ;
@@ -147,6 +170,114 @@ tidy:
 .PHONY: test
 test:
 	go test ./... -count=1
+
+.PHONY: register-cdc
+register-cdc:
+	@bash scripts/register_cdc.sh
+
+.PHONY: test-cdc-trigger
+test-cdc-trigger:
+	@set -e ; \
+	SQL="INSERT INTO $(CDC_DATABASE).outbox_events (id, event_type, payload, status, created_at) VALUES (UUID(), 'TransactionAuthorized', JSON_OBJECT('transaction_id', 'cdc-smoke-test', 'amount', 500, 'currency', 'USD'), 'PENDING', UTC_TIMESTAMP(6));" ; \
+	echo "Inserting CDC verification event into $(MARIADB_CONTAINER)..." ; \
+	docker exec -i "$(MARIADB_CONTAINER)" mariadb --user="$(CDC_DATABASE_USER)" --password="$(CDC_DATABASE_PASSWORD)" --database="$(CDC_DATABASE)" --execute="$${SQL}" ; \
+	echo "Event inserted. Listen with: make test-cdc-listen"
+
+.PHONY: test-cdc-listen
+test-cdc-listen:
+	@set -e ; \
+	KAFKA_ID="$(KAFKA_CONTAINER)" ; \
+	if ! docker inspect "$${KAFKA_ID}" >/dev/null 2>&1 ; then KAFKA_ID="$$(docker compose ps -q kafka)" ; fi ; \
+	[ -n "$${KAFKA_ID}" ] || { echo "Kafka container not found; set KAFKA_CONTAINER=<container>" >&2 ; exit 1 ; } ; \
+	echo "Listening for raw JSON payloads on $(CDC_TOPIC) (Ctrl-C to stop)..." ; \
+	docker exec -it "$${KAFKA_ID}" /opt/kafka/bin/kafka-console-consumer.sh \
+		--bootstrap-server localhost:9092 \
+		--topic "$(CDC_TOPIC)" \
+		--group "cdc-verification-$$(date +%s)" \
+		--from-beginning \
+		--property print.key=true
+
+.PHONY: infra-up
+infra-up:
+	@echo "Starting the Debezium Kafka Connect infrastructure..." ; \
+	docker compose -f $(CDC_COMPOSE_FILE) up -d ; \
+	echo "Kafka Connect should become available at $(CDC_CONNECT_URL)"
+
+.PHONY: infra-down
+infra-down:
+	@echo "Stopping CDC infrastructure and removing its volumes..." ; \
+	docker compose -f $(CDC_COMPOSE_FILE) down --remove-orphans --volumes
+
+.PHONY: cdc-register
+cdc-register:
+	@set -e ; \
+	CONNECT_URL="$(CDC_CONNECT_URL)" ; \
+	CONNECTOR_FILE="$(CDC_CONNECTOR_FILE)" ; \
+	echo "Waiting for Kafka Connect at $${CONNECT_URL} (up to 120 seconds)..." ; \
+	READY=0 ; \
+	for ATTEMPT in $$(seq 1 60); do \
+		if curl --fail --silent --show-error --max-time 5 "$${CONNECT_URL}/" >/dev/null 2>&1; then READY=1 ; break ; fi ; \
+		echo "Kafka Connect is not ready ($${ATTEMPT}/60); retrying in 2 seconds..." ; \
+		sleep 2 ; \
+	done ; \
+	if [ "$${READY}" -ne 1 ]; then echo "Kafka Connect did not become ready." >&2 ; exit 1 ; fi ; \
+	HTTP_CODE=$$(curl --silent --show-error --output /tmp/issuing-cdc-register.json --write-out '%{http_code}' \
+		-X POST "$${CONNECT_URL}/connectors" -H 'Content-Type: application/json' --data-binary "@$${CONNECTOR_FILE}") ; \
+	case "$${HTTP_CODE}" in \
+		201|202) echo "Debezium connector registered." ; cat /tmp/issuing-cdc-register.json ;; \
+		409) echo "Debezium connector already exists; continuing." ;; \
+		*) echo "Connector registration failed with HTTP $${HTTP_CODE}." >&2 ; cat /tmp/issuing-cdc-register.json >&2 ; exit 1 ;; \
+	esac
+
+.PHONY: app-start
+app-start:
+	@set -e ; \
+	mkdir -p "$$(dirname "$(APP_PID_FILE)")" ; \
+	if [ -f "$(APP_PID_FILE)" ] && kill -0 "$$(cat "$(APP_PID_FILE)")" 2>/dev/null; then echo "Go application already running with PID $$(cat "$(APP_PID_FILE)")." ; exit 0 ; fi ; \
+	echo "Starting the Go application with OUTBOX_STRATEGY=cdc..." ; \
+	OUTBOX_STRATEGY=cdc APP_PORT=$(APP_PORT) nohup go run main.go >"$(APP_LOG_FILE)" 2>&1 & echo $$! >"$(APP_PID_FILE)" ; \
+	echo "Go application started with PID $$(cat "$(APP_PID_FILE)"). Logs: $(APP_LOG_FILE)"
+
+.PHONY: test-endpoint
+test-endpoint:
+	@echo "Sending an authorization request to $(AUTHORIZE_URL)..." ; \
+	curl --fail --show-error --silent -X POST "$(AUTHORIZE_URL)" \
+		-H 'Content-Type: application/json' \
+		-H 'Idempotency-Key: cdc-e2e-$$(date +%s)' \
+		-d '{"transaction_id":"cdc-e2e-test","source_account_id":"account-source","destination_account_id":"account-destination","amount":500,"currency":"USD"}' ; \
+	echo
+
+.PHONY: test-kafka-listen
+test-kafka-listen:
+	@set -e ; \
+	KAFKA_ID="$(KAFKA_CONTAINER)" ; \
+	if ! docker inspect "$${KAFKA_ID}" >/dev/null 2>&1; then KAFKA_ID="$$(docker compose ps -q kafka)"; fi ; \
+	[ -n "$${KAFKA_ID}" ] || { echo "Kafka container not found; set KAFKA_CONTAINER=<container>" >&2; exit 1; } ; \
+	echo "Waiting for exactly one event on $(CDC_TOPIC)..." ; \
+	docker exec -i "$${KAFKA_ID}" /opt/kafka/bin/kafka-console-consumer.sh \
+		--bootstrap-server localhost:9092 --topic "$(CDC_TOPIC)" \
+		--group "cdc-e2e-$$(date +%s)" --from-beginning --max-messages 1
+
+.PHONY: e2e-local
+e2e-local:
+	@set -Eeuo pipefail ; \
+	cleanup() { \
+		if [ -f "$(APP_PID_FILE)" ]; then APP_PID=$$(cat "$(APP_PID_FILE)"); kill "$${APP_PID}" 2>/dev/null || true; rm -f "$(APP_PID_FILE)"; fi; \
+	} ; \
+	trap cleanup EXIT INT TERM ; \
+	echo "[1/6] Resetting CDC infrastructure..." ; \
+	$(MAKE) infra-down ; \
+	echo "[2/6] Starting CDC infrastructure..." ; \
+	$(MAKE) infra-up ; \
+	echo "[3/6] Registering Debezium connector..." ; \
+	$(MAKE) cdc-register ; \
+	echo "[4/6] Starting the Go application..." ; \
+	$(MAKE) app-start ; \
+	echo "[5/6] Calling the authorization endpoint..." ; \
+	$(MAKE) test-endpoint ; \
+	echo "[6/6] Reading one Kafka event..." ; \
+	$(MAKE) test-kafka-listen ; \
+	echo "CDC end-to-end smoke test completed."
 
 .PHONY: up
 up:

@@ -1,0 +1,34 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      - MYSQL_HOST=ledger_db
+      - MYSQL_PORT=3306
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=ledger
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=rootpassword
+      - REDIS_HOST=ledger-redis
+      - REDIS_PORT=6379
+      - REDIS_USERNAME=default
+      - REDIS_PASSWORD=your_redis_password
+      - GO_ENV=production
+      - TZ=Asia/Jakarta
+      - ENV=
+      - OUTBOX_STRATEGY=cdc
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otelcollector:4317
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    ports:
+      - "10001:10001"
+      - "8081:8081"
+    volumes:
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/etc/localtime:/etc/localtime:ro"
+    networks:
+      - ledger_network
+
+networks:
+  ledger_network:
+    name: ledger_network

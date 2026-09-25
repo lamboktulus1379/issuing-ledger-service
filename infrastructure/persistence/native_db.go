@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/configuration"
+	"github.com/uptrace/opentelemetry-go-extra/otelsql"
 )
 
 func NewNativeDb() (*sql.DB, error) {
@@ -14,7 +15,10 @@ func NewNativeDb() (*sql.DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := otelsql.Open("mysql", dsn,
+		otelsql.WithDBSystem("mysql"),
+		otelsql.WithDBName(cfg.Name),
+	)
 	if err != nil {
 		return nil, err
 	}

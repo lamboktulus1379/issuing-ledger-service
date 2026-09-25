@@ -1,54 +1,48 @@
+# syntax=docker/dockerfile:1
 # Stage 1: Build the Go application
-FROM golang:1.23.3 AS builder
+FROM golang:1.27 AS builder
 
-RUN apt-get update && \
-        apt-get install -y --no-install-recommends tzdata
-# Set the Current Working Directory inside the container
 WORKDIR /app
 
-# Copy go.mod and go.sum files
+# 1. Copy ONLY dependency manifests first
 COPY go.mod go.sum ./
 
-# Download all dependencies
-RUN go mod download
+# 2. Download dependencies using BuildKit cache mount
+# This layer will be instantly cached unless you modify go.mod
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy the source code into the container
-COPY constant/ ./constant/
-COPY domain/ ./domain/
-COPY infrastructure/ ./infrastructure/
-COPY interfaces/ ./interfaces/
-COPY usecase/ ./usecase/
-COPY mocks/ ./mocks/
-COPY database.go ./database.go
-COPY config.json ./config.json
-COPY goroutine.go ./goroutine.go
-COPY router.go ./router.go
-COPY main.go ./main.go
-COPY go.mod ./go.mod
-COPY go.sum ./go.sum
+# 3. Copy the rest of the source code
+COPY . .
 
-# Build the Go app
-RUN GOOS=linux GOARCH=amd64 go build -o main .
+# 4. Build the application using both module and build caches
+# CGO_ENABLED=0 ensures a static binary for the runtime stage
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o main .
 
 # Stage 2: Create a minimal image with the compiled binary
+# Consider using debian:bookworm-slim as bullseye is aging
 FROM debian:bullseye-slim
-# Create a non-root user and group, and install necessary packages including tzdata
-# Install necessary packages including tzdata
-RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 # Set the timezone environment variable
 ENV TZ=Asia/Jakarta
 
-# Install necessary packages (if any)
-#RUN apk --no-cache add ca-certificates
+# Install required runtime dependencies and clean up apt cache
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the binary from the builder stage
+# Create a non-root user and group
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+
+# Copy the binary and config from the builder stage
 COPY --from=builder /app/main /main
 COPY --from=builder /app/config.json /config.json
 
-# Change ownership of the copied files to the non-root user
-RUN mkdir "logs" \
-   && chown -R appuser /main /config.json /logs
+# Create log directory and change ownership
+RUN mkdir /logs && chown -R appuser:appgroup /main /config.json /logs
 
 # Switch to the non-root user
 USER appuser

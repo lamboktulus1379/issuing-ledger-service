@@ -656,38 +656,307 @@ curl -X GET http://localhost:10001/api/youtube/videos \
 ## License
 MIT License
 
+## Manual Local Execution & Debugging
+
+This guide walks through the local MariaDB -> Debezium -> Kafka pipeline from start to finish. It assumes no previous Kafka or Debezium experience and provides commands that can be copied directly into a terminal.
+
+### Architecture and Assumptions
+
+The pipeline has four parts:
+
+1. MariaDB stores the `outbox_events` row written by the Go application.
+2. Debezium runs inside Kafka Connect and reads committed MariaDB binlog changes.
+3. Kafka receives the routed event on `ledger.events.TransactionAuthorized`.
+4. The Go application writes the outbox row with `OUTBOX_STRATEGY=cdc`; it does not run the polling relay in CDC mode.
+
+This repository's application entrypoint is `main.go`, not `cmd/api/main.go`. The API request examples below use `/authorize`; that route must be registered in the HTTP router before the endpoint test can succeed.
+
+The root `docker-compose.yml` provides MariaDB and Kafka. The separate `infrastructure/docker/docker-compose-cdc.yml` provides Kafka Connect and joins the root Compose network. It does not create a second MariaDB or Kafka.
+
+### Prerequisites
+
+Install Docker Desktop with Compose v2, Go, `curl`, Bash, and Make. Verify them from a terminal:
+
+```bash
+docker --version
+
 ## Real-time Share Status (SSE)
 
 This project provides live share status updates to the frontend using Server-Sent Events (SSE). The Angular app opens a single persistent EventSource connection that streams status changes for all share operations initiated by the authenticated user.
+```
 
-### Why SSE?
-Shares can take several seconds (external API latency, retries). Instead of polling, the UI updates instantly when:
-1. A share request is accepted (immediate pending or success for track_only mode)
-2. Background processing finishes (success or failed)
-3. A retry attempt updates the attempt_count
+Run the commands from the repository root:
 
-### Authentication
-Browsers cannot set custom Authorization headers on an EventSource, so the backend auth middleware accepts a `auth_token` query parameter that contains the same JWT returned at login.
+```bash
+cd /Users/lamboktulussimamora/Projects/issuing-ledger-service
+```
+
+The examples use these defaults:
+
+| Component | Local value |
+|---|---|
+| MariaDB container | `ledger_db` |
+| MariaDB database | `ledger` |
+| Kafka internal address | `kafka:9093` |
+| Kafka Connect REST API | `http://localhost:8083` |
+| Go API | `http://localhost:10001` |
+| Routed Kafka topic | `ledger.events.TransactionAuthorized` |
+
+### 1. Starting Infrastructure
+
+Open **Terminal 1** and start the existing MariaDB and Kafka services:
+
+```bash
 
 ```
+
+Start Kafka Connect in the same terminal:
+
+```bash
+### Why SSE?
+```
+
+The CDC Compose file uses the external network `issuing-ledger-service_default` by default. If Docker reports that the network does not exist, list networks:
+
+```bash
+Shares can take several seconds (external API latency, retries). Instead of polling, the UI updates instantly when:
+```
+
+Then retry with the actual root Compose network name:
+
+```bash
+1. A share request is accepted (immediate pending or success for track_only mode)
+```
+
+Verify the containers:
+
+```bash
+2. Background processing finishes (success or failed)
+```
+
+You should see MariaDB, Kafka, and a container similar to `issuing-kafka-connect`. Kafka Connect may take a while to become ready even though its container is running.
+
+Confirm that the containers share a network:
+
+```bash
+3. A retry attempt updates the attempt_count
+```
+
+MariaDB and Kafka must be reachable from Kafka Connect as `mariadb:3306` and `kafka:9093`.
+
+### 2. Checking Kafka Connect Health
+
+Kafka Connect starts a JVM, loads the Debezium plugin, and creates internal Kafka topics. It commonly takes **30-60 seconds** before accepting REST requests.
+
+In **Terminal 1**, poll the REST API:
+
+```bash
+
+```
+
+Ready output begins with HTTP 200 and resembles:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"version":"3.x.x","commit":"...","kafka_cluster_id":"..."}
+```
+
+Before readiness, `curl` may report connection refused. Wait a few seconds and retry. Follow startup logs when debugging:
+
+```bash
+### Authentication
+```
+
+Press `Ctrl-C` to stop following logs; it does not stop Kafka Connect. The automated equivalent is:
+
+```bash
+Browsers cannot set custom Authorization headers on an EventSource, so the backend auth middleware accepts a `auth_token` query parameter that contains the same JWT returned at login.
+```
+
+That target retries the REST endpoint for up to two minutes.
+
+### 3. Registering the Connector
+
+Register the connector after the health request returns HTTP 200:
+
+```bash
+
+  -H 'Content-Type: application/json' \
+  --data @infrastructure/cdc/outbox-connector.json
+```
+
+The first registration returns HTTP 201 and JSON similar to:
+
+```json
+{
+  "name": "issuing-outbox-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "database.hostname": "mariadb",
+    "table.include.list": "ledger.outbox_events"
+  },
+  "tasks": [],
+  "type": "source"
+}
+```
+
+The real response includes more configuration fields. HTTP 409 means the connector already exists and is safe to keep using. Check its state:
+
+```bash
+```
+```
+
+A healthy connector has `"connector": {"state": "RUNNING"}` and at least one task with `"state": "RUNNING"`.
+
+For a failed connector, inspect both the status and logs:
+
+```bash
 GET /api/share/stream?auth_token=JWT_TOKEN_HERE
 Accept: text/event-stream
 ```
 
-If the token is invalid or missing the stream responds `401` and closes.
+Typical causes are missing MariaDB binlog settings, missing replication privileges, wrong network membership, or Kafka not being available at `kafka:9093`.
 
+### 4. Booting the Go App
+
+The application must run in CDC mode:
+
+```bash
+```
+```
+
+Leave this command running in **Terminal 1**. In CDC mode the Go process writes the transactional outbox row and Debezium publishes it. The Go polling relay is deliberately not started.
+
+Open a **new terminal tab, Terminal 2**, and return to the repository:
+
+```bash
+
+```
+
+### 5. Firing the HTTP Request
+
+First check that the API is reachable:
+
+```bash
+If the token is invalid or missing the stream responds `401` and closes.
+```
+
+Then send an authorization request with a unique idempotency key:
+
+```bash
+
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: manual-cdc-test-001' \
+  -d '{
+    "transaction_id": "manual-cdc-transaction-001",
+    "source_account_id": "account-source",
+    "destination_account_id": "account-destination",
+    "amount": 500,
+    "currency": "USD"
+  }'
+```
+
+An accepted request returns HTTP 200 and resembles:
+
+```json
+{
+  "transaction_id": "manual-cdc-transaction-001",
+  "status": "AUTHORIZED"
+}
+```
+
+The source and destination accounts must already exist and the source must have at least 500 minor units. Otherwise the application correctly returns a domain error and no successful CDC event is expected.
+
+### 6. Verifying Kafka: The Magic Moment
+
+Open **Terminal 3** so Terminal 1 can keep showing application logs. Start a fresh Kafka consumer before sending a new request:
+
+```bash
 ### Backend Route & Hub
+  --bootstrap-server localhost:9092 \
+  --topic ledger.events.TransactionAuthorized \
+  --group manual-cdc-verification-$(date +%s) \
+  --from-beginning \
+  --max-messages 1
+```
+
+The consumer waits for one event, prints it, and exits. While it is waiting, use **Terminal 2** to send a request with a new key:
+
+```bash
 `main.go` wires `/api/share/stream` through the auth middleware into the share hub (`infrastructure/realtime/share_hub.go`). Each connected user gets an in-memory channel. When share records change, the usecase invokes the broadcaster which fan-outs a JSON event.
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: manual-cdc-test-002' \
+  -d '{"transaction_id":"manual-cdc-transaction-002","source_account_id":"account-source","destination_account_id":"account-destination","amount":500,"currency":"USD"}'
+```
+
+The consumer should print the raw JSON from the `payload` column, for example:
+
+```json
+{"transaction_id":"manual-cdc-transaction-002","amount":500,"currency":"USD"}
+```
+
+The exact fields depend on the event JSON written by the Go usecase. Seeing a message on `ledger.events.TransactionAuthorized` after the database transaction commits proves that MariaDB binlog -> Debezium -> Kafka routing worked. No polling worker is involved.
+
+If no message arrives, inspect the connector and database in this order:
+
+```bash
 
 ### Event Payload
 All events use the SSE event name `share_status` and JSON data:
 ```json
+```
+
+If the outbox row exists but the connector task is `FAILED`, fix the connector, binlog, permissions, or network configuration. If the row does not exist, investigate the API request or account fixtures.
+
+### 7. Clean Teardown
+
+In **Terminal 1**, press `Ctrl-C` to stop the Go application.
+
+Stop Kafka Connect and remove its volumes:
+
+```bash
 {
+```
+
+Stop MariaDB and Kafka:
+
+```bash
   "type": "share_status",
+```
+
+To remove those containers as well:
+
+```bash
   "video_id": "YOUTUBE_VIDEO_ID",
+```
+
+The equivalent CDC-only Make target is:
+
+```bash
   "platform": "facebook",
+```
+
+`infra-down` removes CDC Compose volumes. Do not use it when you need to preserve Kafka Connect offsets or local data.
+
+### Automated Smoke Test
+
+After the manual flow works, run the automated sequence:
+
+```bash
   "status": "pending | success | failed",
+```
+
+It resets CDC infrastructure, starts Kafka Connect, registers the connector, starts the Go process in the background, calls the endpoint, consumes one Kafka message, and cleans up the Go PID with a shell trap. Override defaults when necessary:
+
+```bash
   "external_ref": "<external post id, optional>",
+  MARIADB_CONTAINER=ledger_db \
+  KAFKA_CONTAINER=kafka \
+  CDC_DATABASE_PASSWORD=rootpassword \
+  AUTHORIZE_URL=http://localhost:10001/authorize
+```
   "error": "<error message if failed>",
   "attempt_count": 1
 }
