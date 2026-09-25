@@ -3,6 +3,7 @@ package persistence
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/lamboktulus1379/issuing-ledger-service/infrastructure/configuration"
@@ -22,9 +23,18 @@ func NewNativeDb() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetConnMaxIdleTime(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(time.Minute * 5)
+	db.SetConnMaxIdleTime(100)
+	db.SetMaxIdleConns(100)
+	db.SetConnMaxLifetime(time.Hour)
+	otelsql.ReportDBStatsMetrics(db,
+		otelsql.WithDBSystem("mysql"),
+		otelsql.WithDBName(cfg.Name),
+	)
+
+	// Paksa Go membuka koneksi TCP untuk memverifikasi kredensial
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Gagal terhubung ke database: %v", err)
+	}
 
 	return db, nil
 }

@@ -4,6 +4,7 @@ services:
       context: ../..
       dockerfile: Dockerfile
     environment:
+      - SEED_DB=true
       - MYSQL_HOST=ledger_db
       - MYSQL_PORT=3306
       - MYSQL_ROOT_PASSWORD=rootpassword

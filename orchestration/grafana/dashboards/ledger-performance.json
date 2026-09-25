@@ -1,0 +1,258 @@
+{
+  "title": "Ledger API Performance",
+  "tags": ["ledger", "k6", "p99", "red-method", "runtime", "database"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "version": 2,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Row 1: RED Method",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Rate: Requests Per Second",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_milliseconds_count[1m]))",
+          "legendFormat": "RPS",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "bars", "fillOpacity": 70 }
+        }
+      }
+    },
+    {
+      "title": "Errors: 4xx and 5xx Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_milliseconds_count{http_response_status_code=~\"4..|5..\"}[1m]))",
+          "legendFormat": "HTTP errors/sec",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "fixed", "fixedColor": "red" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80 }
+        }
+      }
+    },
+    {
+      "title": "How to Read RED",
+      "type": "text",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "options": {
+        "mode": "markdown",
+        "content": "### RED method\n\n**Rate** is traffic volume. A k6 ramp should make this climb predictably.\n\n**Errors** should stay at zero during a healthy run. A spike means requests are being rejected or failing; correlate the timestamp with application logs and traces.\n\nWhen Rate rises and Errors stay flat, the service is accepting load. When Errors rise first, investigate capacity limits, database failures, authentication, or downstream dependencies."
+      }
+    },
+    {
+      "title": "Duration: p50, p90, p99, and p100",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_milliseconds_bucket[1m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum(rate(http_server_request_duration_milliseconds_bucket[1m])) by (le))",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_milliseconds_bucket[1m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(1.0, sum(rate(http_server_request_duration_milliseconds_bucket[1m])) by (le))",
+          "legendFormat": "p100 approximation",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Duration Notes",
+      "type": "text",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 9 },
+      "options": {
+        "mode": "markdown",
+        "content": "### How to read latency\n\n**p50** is the typical request. **p90** shows slower users. **p99** is the operational tail and is the important line for the sub-50ms objective.\n\nA widening gap between p50 and p99 means only a tail of requests is struggling, often because of lock contention, connection-pool waits, GC, or noisy neighbors.\n\nThe **p100 approximation** is based on the highest histogram bucket and is not an exact maximum. Use it to spot extreme outliers, not as a precise maximum value."
+      }
+    },
+    {
+      "type": "row",
+      "title": "Row 2: Application Runtime",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Heap Memory Used",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 7, "x": 0, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "go_memory_used_bytes",
+          "legendFormat": "Used heap",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memory_limit_bytes",
+          "legendFormat": "Memory limit",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 2 } } }
+    },
+    {
+      "title": "Garbage Collection Pause",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 7, "x": 7, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(go_gc_pause_total_ns[1m]) / 1000000",
+          "legendFormat": "GC pause milliseconds/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(go_gc_count[1m])",
+          "legendFormat": "GC cycles/sec",
+          "refId": "B",
+          "yAxis": 2
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line" } } }
+    },
+    {
+      "title": "Active Goroutines",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 7, "x": 14, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "go_goroutine_count",
+          "legendFormat": "Goroutines",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2 } } }
+    },
+    {
+      "title": "Runtime Interpretation",
+      "type": "text",
+      "gridPos": { "h": 8, "w": 3, "x": 21, "y": 19 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Runtime\n\nA steadily rising heap can indicate retained objects or a memory leak. Saw-tooth heap usage is normal GC behavior.\n\nGC pause spikes can add to p99 latency.\n\nA goroutine spike is not automatically bad, but a sustained rise often means blocked work. Compare it with database wait duration: both rising together commonly indicates pool saturation or lock contention."
+      }
+    },
+    {
+      "type": "row",
+      "title": "Row 3: Database Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "MariaDB Connections In Use",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 7, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "go_sql_connections_in_use",
+          "legendFormat": "In use",
+          "refId": "A"
+        },
+        {
+          "expr": "go_sql_connections_max_open",
+          "legendFormat": "Max open",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2 } } }
+    },
+    {
+      "title": "MariaDB Idle Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 7, "x": 7, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "go_sql_connections_idle",
+          "legendFormat": "Idle",
+          "refId": "A"
+        },
+        {
+          "expr": "go_sql_connections_open",
+          "legendFormat": "Open total",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line" } } }
+    },
+    {
+      "title": "Database Connection Wait Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 7, "x": 14, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(go_sql_connections_wait_duration_nanoseconds[1m]) / 1000000",
+          "legendFormat": "Wait milliseconds/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(go_sql_connections_wait_count[1m])",
+          "legendFormat": "Waits/sec",
+          "refId": "B",
+          "yAxis": 2
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 2 } } }
+    },
+    {
+      "title": "How to Read Database Health",
+      "type": "text",
+      "gridPos": { "h": 8, "w": 3, "x": 21, "y": 29 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Database\n\n**In use near Max open** means the pool is saturated. Requests may wait before they can execute SQL.\n\n**Idle near zero** during load is expected; idle near max during no traffic can indicate an oversized pool.\n\nA spike in **wait duration** means goroutines are blocked waiting for a connection. Correlate it with Active Goroutines and p99 latency.\n\nIf wait time rises while SQL latency is low, increase pool capacity carefully. If the pool is full and SQL is slow, investigate locks and query performance before increasing connections."
+      }
+    }
+  ]
+}

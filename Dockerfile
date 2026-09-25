@@ -8,24 +8,22 @@ WORKDIR /app
 COPY go.mod go.sum ./
 
 # 2. Download dependencies using BuildKit cache mount
-# This layer will be instantly cached unless you modify go.mod
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # 3. Copy the rest of the source code
 COPY . .
 
-# 4. Build the application using both module and build caches
-# CGO_ENABLED=0 ensures a static binary for the runtime stage
+# 4. Build the application
+# FIX: Removed GOARCH=amd64 so it correctly builds for your Apple Silicon (ARM64) host
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o main .
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o main .
 
 # Stage 2: Create a minimal image with the compiled binary
-# Consider using debian:bookworm-slim as bullseye is aging
-FROM debian:bullseye-slim
+# FIX: Upgraded to Bookworm (Debian 12) to fix the 404 apt-get errors
+FROM debian:bookworm-slim
 
-# Set the timezone environment variable
 ENV TZ=Asia/Jakarta
 
 # Install required runtime dependencies and clean up apt cache

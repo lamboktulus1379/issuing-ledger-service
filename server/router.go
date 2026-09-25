@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/lamboktulus1379/issuing-ledger-service/interfaces/middleware"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
@@ -23,6 +25,8 @@ func InitiateRouter(
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.Metrics())
+	registerPprof(router)
 	// Determine allowed origins from environment (comma-separated), with sensible defaults
 	// Env keys supported: ALLOWED_ORIGINS or CORS_ALLOWED_ORIGINS
 	allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
@@ -138,4 +142,25 @@ func InitiateRouter(
 	}
 
 	return router
+}
+
+func registerPprof(router *gin.Engine) {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("PPROF_ENABLED"))) != "true" {
+		return
+	}
+
+	token := strings.TrimSpace(os.Getenv("PPROF_TOKEN"))
+	if token == "" {
+		return
+	}
+
+	router.Use(func(ctx *gin.Context) {
+		if strings.HasPrefix(ctx.Request.URL.Path, "/debug/pprof") && ctx.GetHeader("X-PPROF-TOKEN") != token {
+			ctx.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		ctx.Next()
+	})
+	runtime.SetBlockProfileRate(1)
+	pprof.Register(router, "/debug/pprof")
 }

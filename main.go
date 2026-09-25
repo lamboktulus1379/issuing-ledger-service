@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +35,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"golang.org/x/sync/errgroup"
@@ -45,6 +50,51 @@ func recoverPanic() {
 	if err := recover(); err != nil {
 		logger.GetLogger().WithField("error", err).Error("Application panic recovered")
 	}
+}
+
+func seedLoadTestData(db *sql.DB) error {
+	log.Println("⚠️ SEED_DB is active. Wiping database...")
+
+	// 1. Disable Foreign Key checks to allow clean truncation
+	if _, err := db.Exec("SET FOREIGN_KEY_CHECKS = 0;"); err != nil {
+		return err
+	}
+	defer db.Exec("SET FOREIGN_KEY_CHECKS = 1;")
+
+	// 2. Instantly wipe all existing test data
+	tables := []string{"outbox_events", "ledger_entries", "ledger_transactions", "accounts"}
+	for _, table := range tables {
+		if _, err := db.Exec(fmt.Sprintf("TRUNCATE TABLE %s;", table)); err != nil {
+			return fmt.Errorf("failed to truncate %s: %w", table, err)
+		}
+	}
+
+	log.Println("Database wiped. Seeding 1,000 dummy accounts...")
+
+	// 3. Fast Batch Insert for 1,000 accounts
+	valueStrings := make([]string, 0, 1000)
+	valueArgs := make([]interface{}, 0, 1000*5) // Increased to 5 columns
+
+	for i := 1; i <= 1000; i++ {
+		accountID := fmt.Sprintf("acc_%d", i)
+
+		// 5 placeholders for the 5 required columns
+		valueStrings = append(valueStrings, "(?, ?, ?, ?, ?)")
+
+		// Added "CUSTOMER" as the account type
+		valueArgs = append(valueArgs, accountID, 1000000, "USD", "corp_loadtest", "CUSTOMER")
+	}
+
+	// Added 'type' to the SQL insert statement
+	stmt := fmt.Sprintf("INSERT INTO accounts (id, balance, currency, corporate_client_id, type) VALUES %s",
+		strings.Join(valueStrings, ","))
+
+	if _, err := db.Exec(stmt, valueArgs...); err != nil {
+		return fmt.Errorf("failed to batch insert accounts: %w", err)
+	}
+
+	log.Println("✅ Successfully seeded 1,000 accounts for load testing.")
+	return nil
 }
 
 func initTracer() (func(context.Context) error, error) {
@@ -74,14 +124,43 @@ func initTracer() (func(context.Context) error, error) {
 		semconv.ServiceNameKey.String("ledger-service"),
 	)
 
-	// Register the global trace provider
+	// Register the global trace and metric providers. The periodic reader flushes
+	// metrics to the Collector while the returned shutdown function flushes both
+	// providers during graceful application shutdown.
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 	)
-	otel.SetTracerProvider(tp)
+	metricExporter, err := otlpmetricgrpc.New(ctx,
+		otlpmetricgrpc.WithEndpoint(endpoint),
+		otlpmetricgrpc.WithInsecure(),
+	)
+	if err != nil {
+		_ = tp.Shutdown(ctx)
+		return nil, err
+	}
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter,
+			sdkmetric.WithInterval(5*time.Second),
+		)),
+		sdkmetric.WithResource(res),
+	)
 
-	return tp.Shutdown, nil
+	otel.SetTracerProvider(tp)
+	otel.SetMeterProvider(mp)
+	if err := runtime.Start(runtime.WithMeterProvider(mp)); err != nil {
+		_ = mp.Shutdown(ctx)
+		_ = tp.Shutdown(ctx)
+		return nil, fmt.Errorf("failed to start Go runtime metrics: %w", err)
+	}
+
+	return func(shutdownCtx context.Context) error {
+		if err := mp.Shutdown(shutdownCtx); err != nil {
+			_ = tp.Shutdown(shutdownCtx)
+			return err
+		}
+		return tp.Shutdown(shutdownCtx)
+	}, nil
 }
 
 func main() {
@@ -129,6 +208,14 @@ func main() {
 	mysqlDB, err := InitiateDatabase()
 	if err != nil {
 		logger.GetLogger().WithField("error", err).Error("Database initialization failed")
+	}
+
+	if os.Getenv("SEED_DB") == "true" {
+		if err := seedLoadTestData(mysqlDB); err != nil {
+			log.Fatalf("Failed to seed database: %v", err)
+		}
+		// Optional: Exit immediately after seeding if you only want to use this as a script
+		// os.Exit(0)
 	}
 
 	// mongoDb, err := persistence.NewMongoDb(
@@ -406,6 +493,7 @@ func InitiateDatabase() (*sql.DB, error) {
 		logger.GetLogger().WithField("error", err).Error("Cannot connect to the local database")
 		return nil, err
 	}
+	warmUp(db)
 	return db, nil
 }
 
@@ -434,4 +522,22 @@ func Test() {
 	}
 
 	logger.GetLogger().WithField("googleSheet", googleSheet).Info("Google sheet initialized")
+}
+
+func warmUp(db *sql.DB) {
+	log.Println("Warming up database connection pool...")
+
+	var wg sync.WaitGroup
+	// Panaskan 50 koneksi (atau sesuaikan dengan MaxIdleConns)
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Eksekusi kueri kosong murni untuk memaksa Go membuka koneksi TCP baru
+			_, _ = db.Exec("SELECT 1")
+		}()
+	}
+	wg.Wait()
+
+	log.Println("Database connection pool is warm. Starting Gin server...")
 }
