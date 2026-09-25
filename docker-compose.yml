@@ -7,3 +7,7 @@ include:
 networks:
   ledger_network:
     name: ledger_network
+
+volumes:
+  caddy_data:
+  caddy_config:

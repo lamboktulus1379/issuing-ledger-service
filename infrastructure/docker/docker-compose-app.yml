@@ -30,6 +30,23 @@ services:
     networks:
       - ledger_network
 
+  caddy:
+    image: caddy:latest
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - ledger_network
+
 networks:
   ledger_network:
     name: ledger_network
+    external: true
+volumes:
+  caddy_data:
+  caddy_config:
